@@ -53,26 +53,32 @@ Deliverables: lab-simulator endpoints, sample JSON certificates (pin to IPFS or 
 Visual flow of Herbs::--
 
 [Farmer / Collector] 
+
    │   (GPS-tagged harvest → CollectionEvent on blockchain)
    ▼
    
 [Aggregation / Storage Center]
+
    │   (Batch assigned, custody handoff → ProcessingStep)
    ▼
    
 [Processing Facility]
+
    │   (Drying, cleaning, grinding → ProcessingStep)
    ▼
    
 [Laboratory]
+
    │   (Quality checks, lab certificate → QualityTest)
    ▼
    
 [Manufacturer]
+
    │   (Formulation & packaging → Formulation event)
    ▼
    
 [QR Code Generation]
+
    │   (Unique QR linked to provenance record on blockchain)
    ▼
    
