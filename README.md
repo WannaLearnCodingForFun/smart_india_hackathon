@@ -25,7 +25,7 @@ Integrate fabric-network (Node SDK) to submit/evaluate transactions and to liste
 Implement DB (Postgres JSONB) or local IPFS pinning (Pinata) helpers.
 Dockerize backend, DB, wallet, connection profile; prepare docker-compose.
 
-Final things to give: REST API, wallet + connection-profile setup, docker-compose, runbook.
+Final things to give: REST API, wallet + connection-profile setup, docker-compose, runbook. 
 
 Aditya - Frontend(Nextjs)
 Build collector forms (mobile-first), photo upload to IPFS endpoint or backend, geo-capture (Geolocation API) with manual fallback.
