@@ -1,4 +1,4 @@
-package main
+package chaincode
 
 import (
 	"encoding/json"
@@ -8,87 +8,143 @@ import (
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 )
 
+// CollectionEvent struct 
+type CollectionEvent struct {
+	ID         string   `json:"id"`         // Unique Event ID (e.g., "COL123")
+	Herb       string   `json:"herb"`       // Herb ka naam (e.g., Ashwagandha)
+	GPS        string   `json:"gps"`        // GPS Coordinates jahan se herb collect hua
+	Collector  string   `json:"collector"`  // Collector/Farmer ka ID ya naam
+	Timestamp  string   `json:"timestamp"`  // Event ka timestamp
+	Quality    string   `json:"quality"`    // Initial quality notes (e.g., Moisture: 12%)
+	Certified  bool     `json:"certified"`  // Kya event sustainability rules ke hisaab se valid hai?
+	Docs       []string `json:"docs"`       // Additional docs ka array (lab reports, photo links, etc.)
+	PreviousTx string   `json:"previousTx"` // Last blockchain Tx ka reference (audit trail strengthen karne ke liye)
+}
+
+// SmartContract define karta hai chaincode structure
 type SmartContract struct {
 	contractapi.Contract
 }
 
-type CollectionEvent struct {
-	ID           string    `json:"id"`
-	Timestamp    string    `json:"timestamp"`
-	CollectorID  string    `json:"collectorId"`
-	Species      string    `json:"species"`
-	Lat          float64   `json:"lat"`
-	Lon          float64   `json:"lon"`
-	WeightKg     float64   `json:"weightKg"`
-	MoisturePct  float64   `json:"moisturePct"`
-	PhotoHash    string    `json:"photoHash"`
-	Status       string    `json:"status"` // "RECEIVED", "REJECTED", "PENDING"
-	Notes        string    `json:"notes"`
+//  Helper: CollectionEventExists -> check karega ki ID ledger me already hai ya nahi
+func (s *SmartContract) CollectionEventExists(ctx contractapi.TransactionContextInterface, id string) (bool, error) {
+	eventJSON, err := ctx.GetStub().GetState(id)
+	if err != nil {
+		return false, fmt.Errorf("ledger read failed: %v", err)
+	}
+	return eventJSON != nil, nil
 }
 
-func (s *SmartContract) SubmitCollectionEvent(ctx contractapi.TransactionContextInterface, payload string) error {
-	// identity / MSP check (example: ensure clientMSP == "FarmersMSP")
-	clientMSPID, err := ctx.GetClientIdentity().GetMSPID()
+// Create: AddCollectionEvent -> naye collection event ko ledger me add karega
+func (s *SmartContract) AddCollectionEvent(ctx contractapi.TransactionContextInterface,
+	id string, herb string, gps string, collector string, quality string, docs []string) error {
+
+	// Step 1: Pehle check karo ID already exist to nahi karti
+	exists, err := s.CollectionEventExists(ctx, id)
 	if err != nil {
-		return fmt.Errorf("failed to get client MSPID: %v", err)
+		return err
 	}
-	if clientMSPID != "FarmersMSP" && clientMSPID != "CollectorsMSP" {
-		return fmt.Errorf("unauthorized identity: %s", clientMSPID)
-	}
-
-	// parse payload JSON into struct
-	var ce CollectionEvent
-	if err := json.Unmarshal([]byte(payload), &ce); err != nil {
-		return fmt.Errorf("invalid payload: %v", err)
+	if exists {
+		return fmt.Errorf("collection event %s already exists", id)
 	}
 
-	// basic checks
-	if ce.ID == "" || ce.Species == "" {
-		return fmt.Errorf("missing required fields")
+	// Step 2: Timestamp automatic generate karo agar user ne nahi diya
+	timestamp := time.Now().UTC().Format(time.RFC3339)
+
+	// Step 3: Sustainability check -> (demo rule: Ashwagandha ok, banned herb not ok)
+	certified := true
+	if herb == "BannedHerb" {
+		certified = false
 	}
 
-	// bounding-box check for species zone (MVP - simple arrays; production: polygon service)
-	// For demo: permissible bounding box for Ashwagandha
-	minLat, maxLat := 19.00, 21.00
-	minLon, maxLon := 73.50, 75.50
-	if ce.Lat < minLat || ce.Lat > maxLat || ce.Lon < minLon || ce.Lon > maxLon {
-		ce.Status = "REJECTED"
-		ce.Notes = "outside permitted harvest zone"
-	} else {
-		// seasonal check (example: allowed harvest months April-August)
-		ts, err := time.Parse(time.RFC3339, ce.Timestamp)
+	// Step 4: Previous Tx ka ID le lo (audit trail ke liye)
+	previousTx := ctx.GetStub().GetTxID()
+
+	// Step 5: Event object banao
+	event := CollectionEvent{
+		ID:         id,
+		Herb:       herb,
+		GPS:        gps,
+		Collector:  collector,
+		Timestamp:  timestamp,
+		Quality:    quality,
+		Certified:  certified,
+		Docs:       docs,
+		PreviousTx: previousTx,
+	}
+
+	// Step 6: Marshal into JSON
+	eventJSON, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("JSON marshal error: %v", err)
+	}
+
+	// Step 7: Ledger me store karo
+	return ctx.GetStub().PutState(id, eventJSON)
+}
+
+🔹 Read: ReadCollectionEvent -> ek event ko ledger se fetch karega
+func (s *SmartContract) ReadCollectionEvent(ctx contractapi.TransactionContextInterface, id string) (*CollectionEvent, error) {
+	eventJSON, err := ctx.GetStub().GetState(id)
+	if err != nil {
+		return nil, fmt.Errorf("ledger read error: %v", err)
+	}
+	if eventJSON == nil {
+		return nil, fmt.Errorf("collection event %s does not exist", id)
+	}
+
+	var event CollectionEvent
+	err = json.Unmarshal(eventJSON, &event)
+	if err != nil {
+		return nil, fmt.Errorf("JSON unmarshal error: %v", err)
+	}
+
+	return &event, nil
+}
+
+// Update: UpdateCollectionQuality -> agar naya quality test aaya to update kar sakte ho
+func (s *SmartContract) UpdateCollectionQuality(ctx contractapi.TransactionContextInterface, id string, newQuality string) error {
+	event, err := s.ReadCollectionEvent(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	// Purana data rakho aur sirf quality update karo
+	event.Quality = newQuality
+	event.PreviousTx = ctx.GetStub().GetTxID()
+
+	eventJSON, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+
+	return ctx.GetStub().PutState(id, eventJSON)
+}
+
+//  Query: GetAllCollectionEvents -> saare events ek sath retrieve karne ka function
+func (s *SmartContract) GetAllCollectionEvents(ctx contractapi.TransactionContextInterface) ([]*CollectionEvent, error) {
+	query := `{"selector":{"id":{"$regex":".*"}}}` // CouchDB query -> saare docs with any id
+
+	resultsIterator, err := ctx.GetStub().GetQueryResult(query)
+	if err != nil {
+		return nil, err
+	}
+	defer resultsIterator.Close()
+
+	var events []*CollectionEvent
+	for resultsIterator.HasNext() {
+		queryResponse, err := resultsIterator.Next()
 		if err != nil {
-			return fmt.Errorf("invalid timestamp: %v", err)
+			return nil, err
 		}
-		month := ts.Month()
-		if month < time.April || month > time.August {
-			ce.Status = "PENDING"
-			ce.Notes = "outside recommended season; manual review required"
-		} else {
-			ce.Status = "RECEIVED"
-			ce.Notes = "accepted basic checks"
+
+		var event CollectionEvent
+		err = json.Unmarshal(queryResponse.Value, &event)
+		if err != nil {
+			return nil, err
 		}
+		events = append(events, &event)
 	}
 
-	// store to ledger
-	ceBytes, _ := json.Marshal(ce)
-	if err := ctx.GetStub().PutState(ce.ID, ceBytes); err != nil {
-		return fmt.Errorf("failed to store collection event: %v", err)
-	}
-
-	// create an event for off-chain sync / notifications
-	if err := ctx.GetStub().SetEvent("CollectionEventSubmitted", ceBytes); err != nil {
-		return fmt.Errorf("failed to set event: %v", err)
-	}
-	return nil
-}
-
-func main() {
-	chaincode, err := contractapi.NewChaincode(new(SmartContract))
-	if err != nil {
-		panic(err.Error())
-	}
-	if err := chaincode.Start(); err != nil {
-		panic(err.Error())
-	}
+	return events, nil
 }
