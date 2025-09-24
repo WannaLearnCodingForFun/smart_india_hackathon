@@ -79,7 +79,7 @@ func (s *SmartContract) AddCollectionEvent(ctx contractapi.TransactionContextInt
 		return fmt.Errorf("JSON marshal error: %v", err)
 	}
 
-	// Step 7: Ledger me store karo
+	// Step 7: Ledger me store karenge
 	return ctx.GetStub().PutState(id, eventJSON)
 }
 
